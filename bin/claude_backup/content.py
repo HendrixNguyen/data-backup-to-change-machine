@@ -62,17 +62,23 @@ def find_stale_artifacts(root: Path) -> list[Path]:
     return sorted(out)
 
 
+def aside_path(target: Path) -> Path:
+    """A free <name>.bak-<ts> sibling for target, disambiguated with -N on collision."""
+    stamp = _ts()
+    aside = target.with_name(f"{target.name}.bak-{stamp}")
+    n = 1
+    while aside.exists() or aside.is_symlink():
+        aside = target.with_name(f"{target.name}.bak-{stamp}-{n}")
+        n += 1
+    return aside
+
+
 def replace_dir(target: Path, new_tree: Path, *, keep_aside: bool) -> Path | None:
     """Spec 'directory replace': rename target aside as <name>.bak-<ts>, rename new_tree into place.
     Returns the aside path when kept, else None. Never uses os.replace on a non-empty dir."""
     aside = None
     if target.exists():
-        stamp = _ts()
-        aside = target.with_name(f"{target.name}.bak-{stamp}")
-        n = 1
-        while aside.exists():
-            aside = target.with_name(f"{target.name}.bak-{stamp}-{n}")
-            n += 1
+        aside = aside_path(target)
         os.rename(target, aside)
     target.parent.mkdir(parents=True, exist_ok=True)
     os.rename(new_tree, target)
