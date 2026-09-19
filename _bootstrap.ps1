@@ -28,6 +28,6 @@ $parts = $Py.Split(" ", 2)
 $exe = $parts[0]
 $argv = @()
 if ($parts.Count -gt 1 -and $parts[1]) { $argv += $parts[1] }
-if ($Rest.Count -gt 0 -and $Rest[0] -in @("--version", "-h", "--help")) { & $exe @argv "$Here\bin\backup.py" @Rest; exit $LASTEXITCODE }
+if ($Rest.Count -gt 0 -and $Rest[0] -eq "--version") { & $exe @argv "$Here\bin\backup.py" @Rest; exit $LASTEXITCODE }
 & $exe @argv "$Here\bin\backup.py" $Sub @Rest
 exit $LASTEXITCODE
