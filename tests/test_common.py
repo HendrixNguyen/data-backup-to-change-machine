@@ -29,7 +29,7 @@ def test_harness_root_missing_non_interactive(fake_home):
 
 
 def test_bundle_dir_default_is_repo_root(fake_home, monkeypatch):
-    assert common.resolve_bundle_dir(None).name == "data-backup-to-change-machine" or (common.resolve_bundle_dir(None) / "bin" / "backup.py").exists()
+    assert common.resolve_bundle_dir(None) == common.REPO_ROOT
 
 
 def test_bundle_dir_env(fake_home, monkeypatch, tmp_path):

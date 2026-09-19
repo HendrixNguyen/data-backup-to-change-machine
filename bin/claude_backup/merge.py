@@ -4,9 +4,12 @@ from __future__ import annotations
 import json
 import os
 import tempfile
+import time
 from datetime import datetime
 from pathlib import Path
 from typing import Any
+
+from .common import BackupError
 
 
 def deep_merge(local: Any, bundle: Any, *, force: bool) -> Any:
@@ -20,8 +23,10 @@ def deep_merge(local: Any, bundle: Any, *, force: bool) -> Any:
         seen = [json.dumps(x, sort_keys=True) for x in local]
         out = list(local)
         for x in bundle:
-            if json.dumps(x, sort_keys=True) not in seen:
+            key = json.dumps(x, sort_keys=True)
+            if key not in seen:
                 out.append(x)
+                seen.append(key)
         return out
     return bundle if force else local
 
@@ -34,7 +39,14 @@ def atomic_write_text(path: Path, text: str) -> None:
     try:
         with os.fdopen(fd, "w", encoding="utf-8", newline="\n") as fh:
             fh.write(text)
-        os.replace(tmp, path)
+        for attempt in range(3):
+            try:
+                os.replace(tmp, path)
+                break
+            except PermissionError:
+                if attempt == 2:
+                    raise BackupError(f"cannot replace {path}: it is open or locked by another program — close it and retry")
+                time.sleep(0.2)
     finally:
         if os.path.exists(tmp):
             os.unlink(tmp)
@@ -54,14 +66,18 @@ def read_json(path: Path, default: Any = None) -> Any:
     try:
         return json.loads(path.read_text(encoding="utf-8"))
     except json.JSONDecodeError as e:
-        from .common import BackupError
         raise BackupError(f"{path} is not valid JSON: {e}") from e
 
 
 def backup_file(path: Path) -> Path | None:
-    """Copy <path> to <path>.bak-<YYYYMMDDTHHMMSS>. Returns the backup path, or None if <path> is absent."""
+    """Copy <path> to <path>.bak-<YYYYMMDDTHHMMSSffffff>, disambiguated with -N on collision. Returns the backup path, or None if <path> is absent."""
     if not path.exists():
         return None
-    bak = path.with_name(f"{path.name}.bak-{datetime.now().strftime('%Y%m%dT%H%M%S')}")
+    stamp = datetime.now().strftime("%Y%m%dT%H%M%S%f")
+    bak = path.with_name(f"{path.name}.bak-{stamp}")
+    n = 1
+    while bak.exists():
+        bak = path.with_name(f"{path.name}.bak-{stamp}-{n}")
+        n += 1
     bak.write_bytes(path.read_bytes())
     return bak

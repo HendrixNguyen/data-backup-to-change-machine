@@ -28,6 +28,15 @@ def test_verify_hashes_detects_tamper(bundle_dir):
     assert manifest.verify_hashes(bundle_dir) == ["personal/x.json"]
 
 
+def test_verify_hashes_detects_deleted_file(bundle_dir):
+    (bundle_dir / "personal").mkdir()
+    f = bundle_dir / "personal" / "x.json"; f.write_text("1")
+    manifest.write(bundle_dir, manifest.build(bundle_dir, scopes=("personal",), claude_version=None, symlinks={}, exec_bits={}))
+    assert manifest.verify_hashes(bundle_dir) == []
+    f.unlink()
+    assert manifest.verify_hashes(bundle_dir) == ["personal/x.json"]
+
+
 def test_manifest_paths_use_forward_slashes(bundle_dir):
     (bundle_dir / "harness" / "hooks").mkdir(parents=True)
     (bundle_dir / "harness" / "hooks" / "h.sh").write_text("#!/bin/sh\n")
