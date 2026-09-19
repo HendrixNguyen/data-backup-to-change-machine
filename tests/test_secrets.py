@@ -1,6 +1,6 @@
 import shutil, subprocess
 import pytest
-from claude_backup import secrets
+from claude_backup import common, secrets
 
 
 def test_var_name_normalisation():
@@ -62,3 +62,101 @@ def test_age_roundtrip(tmp_path):
     secrets.age_encrypt(plain, enc, recipient)
     assert not plain.exists() and enc.exists()
     assert secrets.age_decrypt(enc, key) == {"A": "1"}
+
+
+def test_top_level_secret_key_redacted():
+    out, found = secrets.placeholderize_server("personal", "svc", {"Authorization": "Bearer x"})
+    assert out["Authorization"] == "${PERSONAL_MCP_SVC_AUTHORIZATION}"
+    assert found == {"PERSONAL_MCP_SVC_AUTHORIZATION": "Bearer x"}
+
+
+def test_nested_dict_is_walked():
+    out, found = secrets.placeholderize_server("personal", "svc", {"auth": {"apiKey": "z", "mode": "oauth"}})
+    assert out["auth"]["apiKey"] == "${PERSONAL_MCP_SVC_APIKEY}"
+    assert out["auth"]["mode"] == "oauth"
+    assert found == {"PERSONAL_MCP_SVC_APIKEY": "z"}
+
+
+def test_args_flag_then_value_redacted():
+    out, found = secrets.placeholderize_server("personal", "svc", {"args": ["--token", "s", "--verbose"]})
+    assert out["args"] == ["--token", "${PERSONAL_MCP_SVC_ARG_TOKEN}", "--verbose"]
+    assert found == {"PERSONAL_MCP_SVC_ARG_TOKEN": "s"}
+
+
+def test_args_inline_flag_value_redacted():
+    out, found = secrets.placeholderize_server("personal", "svc", {"args": ["--api-key=abc"]})
+    assert out["args"] == ["--api-key=${PERSONAL_MCP_SVC_ARG_API_KEY}"]
+    assert found == {"PERSONAL_MCP_SVC_ARG_API_KEY": "abc"}
+
+
+def test_url_with_userinfo_redacted():
+    out, found = secrets.placeholderize_server("personal", "svc", {"url": "https://u:p@host/mcp"})
+    assert out["url"] == "${PERSONAL_MCP_SVC_URL}"
+    assert found == {"PERSONAL_MCP_SVC_URL": "https://u:p@host/mcp"}
+
+
+def test_non_secret_fields_untouched():
+    server = {"command": "npx", "type": "stdio", "args": ["-y", "pkg", "--port", "3000"]}
+    out, found = secrets.placeholderize_server("personal", "svc", server)
+    assert out == server and found == {}
+
+
+def test_var_name_collision_disambiguates_and_warns(monkeypatch):
+    warnings = []
+    monkeypatch.setattr(secrets.common, "warn", warnings.append)
+    out, found = secrets.placeholderize_server("personal", "svc", {"api-key": "AAA", "api_key": "BBB"})
+    assert found == {"PERSONAL_MCP_SVC_API_KEY": "AAA", "PERSONAL_MCP_SVC_API_KEY_2": "BBB"}
+    assert out["api-key"] == "${PERSONAL_MCP_SVC_API_KEY}"
+    assert out["api_key"] == "${PERSONAL_MCP_SVC_API_KEY_2}"
+    assert len(warnings) == 1 and "api-key" in warnings[0] and "api_key" in warnings[0]
+
+
+def test_same_value_reuses_one_var(monkeypatch):
+    warnings = []
+    monkeypatch.setattr(secrets.common, "warn", warnings.append)
+    out, found = secrets.placeholderize_server("personal", "svc", {"api-key": "SAME", "api_key": "SAME"})
+    assert found == {"PERSONAL_MCP_SVC_API_KEY": "SAME"}
+    assert out["api-key"] == out["api_key"] == "${PERSONAL_MCP_SVC_API_KEY}"
+    assert warnings == []
+
+
+def test_settings_var_name_collision_disambiguates(monkeypatch):
+    monkeypatch.setattr(secrets.common, "warn", lambda m: None)
+    out, found = secrets.placeholderize_settings("personal", {"env": {"MY-TOKEN": "a", "MY_TOKEN": "b"}})
+    assert found == {"PERSONAL_SETTINGS_MY_TOKEN": "a", "PERSONAL_SETTINGS_MY_TOKEN_2": "b"}
+    assert out["env"]["MY_TOKEN"] == "${PERSONAL_SETTINGS_MY_TOKEN_2}"
+
+
+def test_env_file_roundtrip_escapes_newlines_and_backslashes(tmp_path):
+    f = tmp_path / "secrets.env"
+    values = {"A": "line1\nline2", "B": "c:\\path\\x", "C": "cr\rlf"}
+    secrets.write_env(f, values)
+    assert len(f.read_text().splitlines()) == 3  # one line per var despite the embedded newline
+    assert secrets.read_env(f) == values
+
+
+def test_write_env_rejects_key_with_equals(tmp_path):
+    with pytest.raises(common.BackupError):
+        secrets.write_env(tmp_path / "secrets.env", {"A=B": "1"})
+
+
+def test_age_decrypt_missing_file_raises_backup_error(tmp_path, monkeypatch):
+    monkeypatch.setattr(secrets, "age_available", lambda: True)
+
+    def boom(*a, **k):
+        raise FileNotFoundError(2, "No such file or directory")
+
+    monkeypatch.setattr(secrets.common, "run", boom)
+    with pytest.raises(common.BackupError, match="not found"):
+        secrets.age_decrypt(tmp_path / "secrets.env.age", tmp_path / "keys.txt")
+
+
+def test_age_decrypt_wrong_key_raises_backup_error(tmp_path, monkeypatch):
+    monkeypatch.setattr(secrets, "age_available", lambda: True)
+
+    def boom(*a, **k):
+        raise subprocess.CalledProcessError(1, ["age"], output="", stderr="no identity matched")
+
+    monkeypatch.setattr(secrets.common, "run", boom)
+    with pytest.raises(common.BackupError, match="no identity matched"):
+        secrets.age_decrypt(tmp_path / "secrets.env.age", tmp_path / "keys.txt")
