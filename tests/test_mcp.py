@@ -1,6 +1,8 @@
 import json
 from pathlib import Path
+import pytest
 from claude_backup import mcp
+from claude_backup.common import BackupError
 
 
 def test_slug_is_portable():
@@ -36,3 +38,33 @@ def test_remap_paths():
 
 def test_parse_remap_flag():
     assert mcp.parse_remaps(["/Users/h=/home/h", r"C:\a=D:\b"]) == [("/Users/h", "/home/h"), (r"C:\a", r"D:\b")]
+
+
+def test_write_projects_disambiguates_slug_collisions(bundle_dir):
+    dst = bundle_dir / "personal" / "mcp" / "projects"
+    mcp.write_projects(dst, {"/a/b": {"s1": {"command": "x"}}, "/a-b": {"s2": {"command": "y"}}})
+    assert len(list(dst.glob("*.json"))) == 2
+    assert mcp.read_projects(dst) == {"/a/b": {"s1": {"command": "x"}}, "/a-b": {"s2": {"command": "y"}}}
+
+
+def test_read_projects_rejects_a_malformed_file(bundle_dir):
+    dst = bundle_dir / "projects"; dst.mkdir()
+    (dst / "bogus.json").write_text(json.dumps({"mcpServers": {}}))
+    with pytest.raises(BackupError, match="not a project MCP file"):
+        mcp.read_projects(dst)
+
+
+def test_remap_respects_path_segment_boundaries():
+    projects = {"/Users/huygen/x": {}, "/Users/huy/x": {}}
+    out = mcp.remap_projects(projects, [("/Users/huy", "/home/huy2")])
+    assert set(out) == {"/Users/huygen/x", "/home/huy2/x"}   # huygen is a different segment, untouched
+
+
+def test_remap_skips_partial_hit_and_uses_the_later_valid_one():
+    out = mcp.remap_projects({"/Users/huygen/x": {}}, [("/Users/huy", "/A"), ("/Users/huygen", "/B")])
+    assert list(out) == ["/B/x"]
+
+
+def test_remap_matches_whole_string_and_windows_separator():
+    out = mcp.remap_projects({"/Users/huy": {}, r"C:\a\p": {}}, [("/Users/huy", "/home/h"), (r"C:\a", r"D:\b")])
+    assert set(out) == {"/home/h", r"D:\b\p"}

@@ -1,12 +1,17 @@
 """Copy content units (skill dirs, agent/command/hook files) for export and restore."""
 from __future__ import annotations
 
+import fnmatch
 import os
 import shutil
 import tempfile
 from dataclasses import dataclass, field
 from datetime import datetime
 from pathlib import Path
+
+from . import common
+
+STALE_GLOBS = ("*.bak-*", ".*.tmp")  # aside dirs + mkdtemp/mkstemp staging left by an interrupted run
 
 
 @dataclass
@@ -24,14 +29,37 @@ def list_units(src: Path) -> list[str]:
 
 def _copy_unit(src: Path, dst: Path) -> None:
     if src.is_dir():
-        shutil.copytree(src, dst, symlinks=False, dirs_exist_ok=False)
+        shutil.copytree(src, dst, symlinks=False, dirs_exist_ok=False, ignore_dangling_symlinks=True)
     else:
         dst.parent.mkdir(parents=True, exist_ok=True)
         shutil.copy2(src, dst, follow_symlinks=True)
 
 
 def _ts() -> str:
-    return datetime.now().strftime("%Y%m%dT%H%M%S")
+    return datetime.now().strftime("%Y%m%dT%H%M%S%f")
+
+
+def _is_stale(name: str) -> bool:
+    return any(fnmatch.fnmatch(name, g) for g in STALE_GLOBS)
+
+
+def find_stale_artifacts(root: Path) -> list[Path]:
+    """Leftovers from an interrupted run under root: aside dirs (*.bak-*) and staging trees (.*.tmp).
+    A matched dir is reported once and not descended into."""
+    out: list[Path] = []
+    if not root.is_dir():
+        return out
+    for dirpath, dirnames, filenames in os.walk(root):
+        d = Path(dirpath)
+        keep = []
+        for name in dirnames:
+            if _is_stale(name):
+                out.append(d / name)
+            else:
+                keep.append(name)
+        dirnames[:] = keep
+        out.extend(d / name for name in filenames if _is_stale(name))
+    return sorted(out)
 
 
 def replace_dir(target: Path, new_tree: Path, *, keep_aside: bool) -> Path | None:
@@ -39,7 +67,12 @@ def replace_dir(target: Path, new_tree: Path, *, keep_aside: bool) -> Path | Non
     Returns the aside path when kept, else None. Never uses os.replace on a non-empty dir."""
     aside = None
     if target.exists():
-        aside = target.with_name(f"{target.name}.bak-{_ts()}")
+        stamp = _ts()
+        aside = target.with_name(f"{target.name}.bak-{stamp}")
+        n = 1
+        while aside.exists():
+            aside = target.with_name(f"{target.name}.bak-{stamp}-{n}")
+            n += 1
         os.rename(target, aside)
     target.parent.mkdir(parents=True, exist_ok=True)
     os.rename(new_tree, target)
@@ -62,11 +95,14 @@ def export_kind(src: Path, dst: Path, *, bundle_rel: str) -> ExportResult:
     for name in units:
         s = src / name
         if s.is_symlink():
+            if not s.exists():
+                common.warn(f"{bundle_rel}/{name}: broken symlink → {os.readlink(s)}, skipped")
+                continue
             res.symlinks[f"{bundle_rel}/{name}"] = str(s.resolve())
         _copy_unit(s, tmp / name)
         res.units.append(name)
     for p in tmp.rglob("*"):
-        if p.is_file() and os.name != "nt" and os.access(p, os.X_OK):
+        if p.is_file() and os.name != "nt" and p.stat().st_mode & 0o111:
             res.exec_bits[f"{bundle_rel}/{p.relative_to(tmp).as_posix()}"] = True
     replace_dir(dst, tmp, keep_aside=False)
     return res

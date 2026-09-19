@@ -14,7 +14,10 @@ CONTENT_KINDS = {"personal": ("skills", "agents", "commands"), "harness": ("skil
 def _git_dirty(bundle_dir: Path) -> bool:
     if not (bundle_dir / ".git").exists():
         return False
-    r = subprocess.run(["git", "status", "--porcelain"], cwd=bundle_dir, capture_output=True, text=True)
+    try:
+        r = subprocess.run(["git", "status", "--porcelain"], cwd=bundle_dir, capture_output=True, text=True)
+    except FileNotFoundError:
+        return False   # no git binary: nothing we can check, and the export itself does not need it
     return bool(r.stdout.strip())
 
 
@@ -23,7 +26,7 @@ def _claude_version() -> str | None:
     if not exe:
         return None
     try:
-        return common.run([exe, "--version"]).stdout.strip()
+        return common.run([exe, "--version"], timeout=30).stdout.strip()
     except Exception:
         return None
 
@@ -96,6 +99,8 @@ def export_harness(bundle_dir: Path, harness: Path, found: dict[str, str], symli
 def run_export(args) -> int:
     try:
         bundle_dir = common.resolve_bundle_dir(args.bundle)
+        for stale in content.find_stale_artifacts(bundle_dir):
+            common.warn(f"stale artifact from an interrupted run (safe to delete): {stale}")
         scopes = common.scopes_for(args.scope)
         if not args.yes and _git_dirty(bundle_dir):
             raise common.BackupError(f"{bundle_dir} has uncommitted changes — commit/stash them or pass --yes")

@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import copy
+import hashlib
 import re
 from pathlib import Path
 
@@ -26,12 +27,28 @@ def extract_harness(mcp_json: Path) -> Servers:
     return (merge.read_json(mcp_json, default={}) or {}).get("mcpServers") or {}
 
 
+def _unique_slugs(paths) -> dict[str, str]:
+    """slug() is lossy (/a/b and /a-b collide). Disambiguate only the colliding paths, so the
+    common case keeps the readable name."""
+    counts: dict[str, int] = {}
+    for path in paths:
+        counts[slug(path)] = counts.get(slug(path), 0) + 1
+    out = {}
+    for path in paths:
+        s = slug(path)
+        if counts[s] > 1:
+            s = f"{s}-{hashlib.sha1(path.encode('utf-8')).hexdigest()[:8]}"
+        out[path] = s
+    return out
+
+
 def write_projects(dst: Path, projects: ProjectServers) -> None:
     if dst.exists():
         for old in dst.glob("*.json"):
             old.unlink()
+    slugs = _unique_slugs(projects)
     for path, servers in projects.items():
-        merge.atomic_write_json(dst / f"{slug(path)}.json", {"project": path, "mcpServers": servers})
+        merge.atomic_write_json(dst / f"{slugs[path]}.json", {"project": path, "mcpServers": servers})
 
 
 def read_projects(src: Path) -> ProjectServers:
@@ -39,7 +56,10 @@ def read_projects(src: Path) -> ProjectServers:
     if src.is_dir():
         for f in sorted(src.glob("*.json")):
             d = merge.read_json(f)
-            out[d["project"]] = d["mcpServers"]
+            try:
+                out[d["project"]] = d["mcpServers"]
+            except (KeyError, TypeError) as e:
+                raise common.BackupError(f"{f}: not a project MCP file (expected keys project, mcpServers)") from e
     return out
 
 
@@ -54,8 +74,12 @@ def parse_remaps(flags: list[str]) -> list[tuple[str, str]]:
 
 
 def _remap_str(s: str, remaps: list[tuple[str, str]]) -> str:
+    """First remap that matches on a path-segment boundary wins; a partial-segment hit
+    (/Users/huy vs /Users/huygen) is skipped, not treated as a match."""
     for old, new in remaps:
-        if s.startswith(old):
+        if s == old:
+            return new
+        if s.startswith(old) and len(s) > len(old) and s[len(old)] in ("/", "\\"):
             return new + s[len(old):]
     return s
 

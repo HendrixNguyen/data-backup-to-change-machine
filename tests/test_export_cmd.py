@@ -1,4 +1,4 @@
-import json, os, subprocess
+import json, subprocess
 from types import SimpleNamespace
 from claude_backup import export_cmd, manifest
 
@@ -50,3 +50,11 @@ def test_export_second_run_is_idempotent(fake_home, bundle_dir):
     export_cmd.run_export(args(scope="personal", bundle=bundle_dir))
     second = {p.relative_to(bundle_dir).as_posix(): p.read_bytes() for p in bundle_dir.rglob("*") if p.is_file() and p.name != "bundle.json"}
     assert first == second
+
+
+def test_export_warns_about_stale_artifacts(fake_home, bundle_dir, capsys):
+    stale = bundle_dir / "personal" / "skills" / "x.bak-123"
+    stale.mkdir(parents=True)
+    assert export_cmd.run_export(args(scope="personal", bundle=bundle_dir)) == 0
+    err = capsys.readouterr().err
+    assert f"stale artifact from an interrupted run (safe to delete): {stale}" in err
