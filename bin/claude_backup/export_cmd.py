@@ -109,6 +109,9 @@ def run_export(args) -> int:
         owners: dict = {}
         symlinks: dict[str, str] = {}
         exec_bits: dict[str, bool] = {}
+        wsl = common.wsl_notice()
+        if wsl:
+            common.warn(wsl)
         common.log(f"Exporting {', '.join(scopes)} → {bundle_dir}")
         if "personal" in scopes:
             export_personal(bundle_dir, found, owners, symlinks, exec_bits)

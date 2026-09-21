@@ -15,3 +15,22 @@ jobs:
       - run: python -m pip install pytest
       - run: python bin/backup.py --version
       - run: python -m pytest -q
+
+  wsl:
+    # WSL is Linux to Python but sits next to a Windows home, so it gets its own run.
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: Vampire/setup-wsl@v3
+        with:
+          distribution: Ubuntu-24.04
+          additional-packages: python3 python3-pip git
+      - shell: wsl-bash {0}
+        run: |
+          set -eu
+          python3 --version
+          [ -f /proc/version ] && grep -qi microsoft /proc/version && echo "WSL confirmed"
+          python3 -m pip install --break-system-packages pytest
+          python3 bin/backup.py --version
+          sh ./doctor.sh --version
+          python3 -m pytest -q

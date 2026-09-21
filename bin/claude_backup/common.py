@@ -58,6 +58,45 @@ def resolve_bundle_dir(explicit: Path | None) -> Path:
     return REPO_ROOT
 
 
+def is_wsl() -> bool:
+    """WSL reports itself as Linux, which is correct for how files behave, but it has two homes."""
+    if os.environ.get("WSL_DISTRO_NAME"):
+        return True
+    try:
+        return "microsoft" in Path("/proc/version").read_text().lower()
+    except OSError:
+        return False
+
+
+def wsl_windows_claude_dirs() -> list[Path]:
+    """Native-Windows Claude Code configs as WSL sees them, if the Windows drive is mounted."""
+    out: list[Path] = []
+    for users in (Path("/mnt/c/Users"), Path("/c/Users")):
+        try:
+            if users.is_dir():
+                out += sorted(p for p in users.glob("*/.claude") if p.is_dir())
+        except OSError:
+            pass
+    return out
+
+
+def wsl_notice() -> str | None:
+    """Under WSL, say which of the two homes is being used. Restoring into the Linux home when
+    Claude Code actually runs on Windows would report success and change nothing that matters."""
+    if not is_wsl():
+        return None
+    linux_side = personal_roots().claude_dir
+    windows_side = wsl_windows_claude_dirs()
+    if not windows_side:
+        return None
+    if not linux_side.exists():
+        return (f"WSL: targeting {linux_side}, which does not exist, while a Windows-side config is at "
+                f"{windows_side[0]}. If your Claude Code runs on Windows, use .\\restore.ps1 from Windows "
+                f"or point HOME at the Windows home.")
+    return (f"WSL: targeting the Linux home {linux_side}. The Windows-side config at {windows_side[0]} "
+            "is a separate install and is not touched.")
+
+
 def scopes_for(arg: str) -> tuple[str, ...]:
     return SCOPES if arg == "all" else (arg,)
 

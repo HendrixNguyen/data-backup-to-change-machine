@@ -204,6 +204,9 @@ def restore_one(args, target: Target, bundle_dir: Path, harness_path: Path | Non
     s = Session(args, target, bundle_dir, harness_path, values, missing_key)
     if missing_key:
         s.notices.append("secrets.env.age present but no age key — placeholders left in place")
+    wsl = common.wsl_notice()
+    if wsl and target.name == "claude":
+        s.notices.append(wsl)
     note = getattr(target, "legacy_layout_notice", lambda: None)()
     if note:
         s.notices.append(note)
