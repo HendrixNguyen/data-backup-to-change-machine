@@ -10,12 +10,12 @@ def _fake_wsl(monkeypatch, tmp_path, *, windows_users: Path | None):
     real_glob = Path.glob
 
     def is_dir(self):
-        if str(self) in ("/mnt/c/Users", "/c/Users"):
+        if self.as_posix() in ("/mnt/c/Users", "/c/Users"):   # str() uses backslashes on Windows
             return windows_users is not None
         return real_is_dir(self)
 
     def glob(self, pat):
-        if str(self) in ("/mnt/c/Users", "/c/Users") and windows_users is not None:
+        if self.as_posix() in ("/mnt/c/Users", "/c/Users") and windows_users is not None:
             return real_glob(windows_users, pat)
         return real_glob(self, pat)
 
