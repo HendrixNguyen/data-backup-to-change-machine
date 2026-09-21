@@ -194,11 +194,17 @@ Environment variables:
 - **`restore` exits 1 even though the plan applied cleanly.** Its final verify step can
   fail for reasons that have nothing to do with the restore itself — most commonly a
   skill's `SKILL.md` that was already missing valid frontmatter before you ever exported
-  it, or a literal `${SOME_VAR}`-shaped string that was already part of a skill's own
-  documentation (a shell example, a plugin's own `${CLAUDE_PLUGIN_ROOT}` template
-  variable) getting flagged by the "placeholders resolved" check, which can't tell that
-  apart from a real unresolved secret. Read the PASS/FAIL list before assuming the
-  restore failed.
+  it. Read the PASS/FAIL list before assuming the restore failed: the exit code covers
+  every check, and a pre-existing problem in your own config fails one of them.
+
+  (The "placeholders resolved" check only counts variables this bundle created, which it
+  reads from `secrets.required`. A literal `${CLAUDE_PLUGIN_ROOT}` or a shell example in
+  a skill's own documentation is left alone.)
+
+- **A symlinked skill comes back as a real folder on Windows.** Restore never creates
+  symlinks there, so a skill that was a symlink on the source machine is copied instead,
+  and the plan says so. The content is identical; only the link is lost. Re-link it
+  yourself if you want the original arrangement back.
 
 ## Development
 
