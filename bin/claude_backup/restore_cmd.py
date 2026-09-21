@@ -43,7 +43,9 @@ class Session:
         return out
 
     def _text_with_secrets(self, src: Path) -> str:
-        text = src.read_text(encoding="utf-8", errors="replace")
+        # decode from bytes, never read_text(): universal-newline mode turns CRLF into LF, so a
+        # Windows file that merely contains ${...} came back with its line endings rewritten
+        text = src.read_bytes().decode("utf-8", errors="replace")
         text, missing = secrets.substitute(text, self.values)
         for m in missing:
             if m not in self.missing_secrets:

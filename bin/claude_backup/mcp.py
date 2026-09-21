@@ -73,6 +73,14 @@ def parse_remaps(flags: list[str]) -> list[tuple[str, str]]:
     return out
 
 
+def _local_sep(s: str) -> str:
+    """After a cross-OS remap a key looks like 'C:\\Users\\new/proj-b'. Normalise the tail to the
+    separator the new prefix uses, so the target tool can match the path it actually has."""
+    if "\\" in s and "/" in s:
+        return s.replace("/", "\\") if s[:3].endswith(":\\") or s.startswith("\\\\") else s.replace("\\", "/")
+    return s
+
+
 def _remap_str(s: str, remaps: list[tuple[str, str]]) -> str:
     """First remap that matches on a path-segment boundary wins; a partial-segment hit
     (/Users/huy vs /Users/huygen) is skipped, not treated as a match."""
@@ -80,7 +88,7 @@ def _remap_str(s: str, remaps: list[tuple[str, str]]) -> str:
         if s == old:
             return new
         if s.startswith(old) and len(s) > len(old) and s[len(old)] in ("/", "\\"):
-            return new + s[len(old):]
+            return _local_sep(new + s[len(old):])
     return s
 
 

@@ -54,9 +54,14 @@ def test_restore_into_empty_home(exported, fake_home, fake_harness):
 
 
 def test_restore_recreates_symlink_when_origin_exists(exported, fake_home, fake_harness):
+    """POSIX gets the symlink back. Windows gets a copy plus a notice — restore never creates
+    symlinks there, so the content must still arrive."""
     restore_cmd.run_restore(rargs(bundle=exported, harness_path=fake_harness))
     p = fake_home / ".claude/skills/linked-skill"
-    assert p.is_symlink() and p.resolve() == (fake_home / ".agents/skills/linked-skill").resolve()
+    if os.name == "nt":
+        assert p.is_dir() and (p / "SKILL.md").read_text().startswith("---")
+    else:
+        assert p.is_symlink() and p.resolve() == (fake_home / ".agents/skills/linked-skill").resolve()
 
 
 def test_merge_skips_existing_force_replaces(exported, fake_home, fake_harness):
@@ -73,7 +78,8 @@ def test_remap_applies_to_project_paths(exported, fake_home, fake_harness):
     rc = restore_cmd.run_restore(rargs(bundle=exported, harness_path=fake_harness, scope="personal", remap=[f"{fake_home}=/new/home"]))
     assert rc == 0
     cj = json.loads((fake_home / ".claude.json").read_text())
-    assert "/new/home/proj-b" in cj["projects"]
+    sep = "\\" if os.name == "nt" else "/"      # a cross-OS remap normalises the tail to one separator
+    assert f"/new/home{sep}proj-b" in cj["projects"]
 
 
 def test_secrets_substituted_when_key_present(exported, fake_home, fake_harness, monkeypatch):
@@ -180,7 +186,8 @@ def test_force_restore_is_idempotent_for_mcp_and_symlinks(exported, fake_home, f
     assert restore_cmd.run_restore(rargs(bundle=exported, harness_path=fake_harness, force=True)) == 0
     assert baks() == before
     p = fake_home / ".claude/skills/linked-skill"
-    assert p.is_symlink()                                        # still a symlink, not churned into a copy
+    if os.name != "nt":
+        assert p.is_symlink()                                    # still a symlink, not churned into a copy
 
 
 def test_aside_is_recorded_before_the_risky_rename(fake_home, tmp_path, monkeypatch):
@@ -203,3 +210,18 @@ def test_aside_is_recorded_before_the_risky_rename(fake_home, tmp_path, monkeypa
         content.replace_dir(target, new_tree, keep_aside=True, on_aside=seen.append)
     assert len(seen) == 1 and (seen[0] / "f").read_text() == "original"
     assert not target.exists()          # the failure mode; recoverable only because seen[0] is known
+
+
+def test_crlf_line_endings_survive_secret_substitution(exported, fake_home, fake_harness):
+    """A file that merely contains ${...} must keep its own line endings. Reading it in universal
+    newline mode rewrote every CRLF file as LF on Windows."""
+    # command/agent FILES always go through text substitution (skills are directories, copied byte-wise)
+    src = exported / "personal" / "commands" / "review-code.md"
+    src.write_bytes(b"Review the code.\r\nSecond line.\r\n")
+    from claude_backup import manifest
+    manifest.write(exported, manifest.build(exported, scopes=("personal", "harness"), claude_version=None,
+                                            symlinks=manifest.read(exported).get("symlinks", {}), exec_bits={}))
+    assert restore_cmd.run_restore(rargs(bundle=exported, harness_path=fake_harness, scope="personal")) == 0
+    out = (fake_home / ".claude/commands/review-code.md").read_bytes()
+    assert b"\r\n" in out
+    assert out.count(b"\n") == out.count(b"\r\n")      # no bare LF: every ending stayed CRLF
