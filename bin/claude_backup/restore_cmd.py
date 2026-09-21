@@ -299,7 +299,8 @@ def run_restore(args) -> int:
         bundle_dir = common.resolve_bundle_dir(args.bundle)
         names = all_target_names() if args.target == "all" else [args.target]
         targets = [get_target(n) for n in names]
-        preflight.run_preflight(need_claude=any(t.name == "claude" for t in targets), bundle_dir=bundle_dir)
+        preflight.run_preflight(need_claude=any(t.name == "claude" for t in targets), bundle_dir=bundle_dir,
+                                yes=args.yes, dry_run=args.dry_run)   # a dry run must never install anything
         harness_path = _harness_path_if_needed(args, common.scopes_for(args.scope)) if any(t.supports_harness for t in targets) else None
         rc = 0
         for t in targets:
@@ -314,7 +315,9 @@ def run_doctor(args) -> int:
     try:
         bundle_dir = common.resolve_bundle_dir(args.bundle)
         target = get_target(args.target)
-        preflight.run_preflight(need_claude=(target.name == "claude"), bundle_dir=bundle_dir if (bundle_dir / manifest.MANIFEST).exists() else None)
+        preflight.run_preflight(need_claude=(target.name == "claude"),
+                                bundle_dir=bundle_dir if (bundle_dir / manifest.MANIFEST).exists() else None,
+                                yes=args.yes)
         print("preflight: ok")
         if (bundle_dir / manifest.MANIFEST).exists():
             scopes = common.scopes_for(args.scope)

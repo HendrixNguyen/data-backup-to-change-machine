@@ -108,3 +108,13 @@ def test_windows_path_in_env_secret_survives(exported, fake_home, fake_harness, 
     (exported / "secrets.env.age").write_bytes(b"x")
     assert restore_cmd.run_restore(rargs(bundle=exported, harness_path=fake_harness, scope="personal")) == 0
     assert json.loads((fake_home / ".claude/settings.json").read_text())["env"]["PLAIN"] == 'C:\\Users\\h "q"\nx'
+
+
+def test_dry_run_never_installs_tools(exported, fake_home, fake_harness, monkeypatch):
+    """A dry run inspects; it must not change the machine. Guards the preflight wiring."""
+    from claude_backup import preflight
+    seen = {}
+    monkeypatch.setattr(restore_cmd.preflight, "run_preflight",
+                        lambda **kw: seen.update(kw))
+    restore_cmd.run_restore(rargs(bundle=exported, harness_path=fake_harness, dry_run=True))
+    assert seen.get("dry_run") is True
