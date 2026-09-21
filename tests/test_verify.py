@@ -9,6 +9,9 @@ def _bundle(tmp_path):
     (b / "personal/agents").mkdir(); (b / "personal/agents/a.md").write_text("---\nname: a\n---\n")
     (b / "personal/mcp").mkdir(); (b / "personal/mcp/global.json").write_text('{"mcpServers": {"srv": {"command": "x"}}}')
     (b / "personal/mcp/projects").mkdir()
+    # a real bundle always records the variables it created; verify uses it to tell our
+    # placeholders apart from ${...} text a skill legitimately contains
+    (b / "secrets.required").write_text("PERSONAL_MCP_X_TOKEN\n")
     return b
 
 
@@ -61,3 +64,20 @@ def test_exit_code(capsys):
 def test_frontmatter_ok_allows_dashes_inside_values():
     assert verify.frontmatter_ok("---\ndescription: a --- b\nname: x\n---\nbody") is True
     assert verify.frontmatter_ok("---\ndescription: d\n---\nname: only in body\n") is False
+
+
+def test_foreign_placeholder_is_not_a_failure(fake_home, tmp_path):
+    """${CLAUDE_PLUGIN_ROOT} in a skill doc is the skill's own text, not an unresolved secret."""
+    b = _bundle(tmp_path)
+    f = fake_home / "w.md"; f.write_text("run ${CLAUDE_PLUGIN_ROOT}/bin and ${PROJECT_ENC}\n")
+    checks = verify.run_checks(b, get_target("claude"), scopes=(), written_files=[f], missing_secrets=[], run_cli=False)
+    c = [c for c in checks if c.name.startswith("placeholders")][0]
+    assert c.ok is True
+
+
+def test_our_own_unresolved_placeholder_still_fails(fake_home, tmp_path):
+    b = _bundle(tmp_path)
+    f = fake_home / "w.json"; f.write_text('{"a": "${PERSONAL_MCP_X_TOKEN}"}')
+    checks = verify.run_checks(b, get_target("claude"), scopes=(), written_files=[f], missing_secrets=[], run_cli=False)
+    c = [c for c in checks if c.name.startswith("placeholders")][0]
+    assert c.ok is False and "PERSONAL_MCP_X_TOKEN" in c.detail

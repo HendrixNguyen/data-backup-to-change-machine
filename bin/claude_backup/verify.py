@@ -81,12 +81,25 @@ def _mcp_checks(bundle_dir: Path, target: Target, scopes, harness_path: Path | N
     return out
 
 
-def _placeholder_check(written_files: list[Path], missing_secrets: list[str]) -> Check:
+def _bundle_var_names(bundle_dir: Path) -> set[str]:
+    """The variables this bundle actually created, from secrets.required."""
+    f = bundle_dir / "secrets.required"
+    if not f.is_file():
+        return set()
+    return {l.strip() for l in f.read_text(encoding="utf-8").splitlines() if l.strip()}
+
+
+def _placeholder_check(written_files: list[Path], missing_secrets: list[str], ours: set[str]) -> Check:
+    """Only OUR placeholders count. Skills legitimately contain ${CLAUDE_PLUGIN_ROOT} and shell
+    examples; flagging those made a correct restore exit non-zero."""
     stray, known = set(), set()
     for f in written_files:
         if f.is_file():
             for var in secrets.PLACEHOLDER_RE.findall(f.read_text(encoding="utf-8", errors="replace")):
-                (known if var in missing_secrets else stray).add(var)
+                if var in missing_secrets:
+                    known.add(var)
+                elif var in ours:
+                    stray.add(var)
     if stray:
         return Check("placeholders resolved", False, "unresolved: " + ", ".join(sorted(stray)))
     return Check("placeholders resolved", True, ("missing secrets (no key): " + ", ".join(sorted(known))) if known else "")
@@ -115,7 +128,7 @@ def run_checks(bundle_dir: Path, target: Target, *, scopes, written_files: list[
                harness_path: Path | None = None, only=()) -> list[Check]:
     checks = (_content_checks(bundle_dir, target, scopes, harness_path, only)
               + _mcp_checks(bundle_dir, target, scopes, harness_path, only)
-              + [_placeholder_check(written_files, missing_secrets)])
+              + [_placeholder_check(written_files, missing_secrets, _bundle_var_names(bundle_dir))])
     if run_cli:
         checks += _cli_checks(target)
     return checks
