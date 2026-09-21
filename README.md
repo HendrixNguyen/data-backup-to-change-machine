@@ -167,6 +167,25 @@ useless without your private key, but decide that deliberately):
 ./export.sh --commit-secrets
 ```
 
+### The bundle belongs in a private repo
+
+Before writing anything, `export` asks the host whether the bundle's `origin` is world-readable
+— a public repo is by definition one an anonymous request can read, so this needs no token.
+If it is public, export refuses:
+
+```
+error: refusing to export: github.com/you/your-backup is a PUBLIC repository.
+  Committing a bundle there publishes your skills, project paths and internal
+  hostnames, even though the secrets themselves are placeholders.
+  Make it private, or pass --allow-public if that is genuinely what you want.
+```
+
+Placeholders protect the secret *values*. They do not hide which tools you use, what your
+projects are called, or which internal hosts you talk to. Make the repo private; use
+`--allow-public` only when publishing all of that is the actual intent. A remote the tool
+cannot reach, or a self-hosted host it does not recognise, is reported as unknown and warned
+about rather than waved through.
+
 ## Flags
 
 | flag | subcommands | meaning |
@@ -181,6 +200,7 @@ useless without your private key, but decide that deliberately):
 | `--force` | restore | let the bundle overwrite a unit that already differs on this machine |
 | `--remap OLD=NEW` | restore | rewrite a project path prefix for MCP project servers (repeatable) |
 | `--commit-secrets` | export | commit the encrypted `secrets.env.age` instead of leaving it gitignored |
+| `--allow-public` | export | export anyway when the bundle's git remote is a public repository |
 
 Environment variables:
 

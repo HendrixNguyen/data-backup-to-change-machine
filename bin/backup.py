@@ -24,6 +24,8 @@ def build_parser() -> argparse.ArgumentParser:
 
     e = sub.add_parser("export", parents=[common])
     e.add_argument("--commit-secrets", action="store_true")
+    e.add_argument("--allow-public", action="store_true",
+                   help="proceed even when the bundle's git remote is a public repository")
 
     r = sub.add_parser("restore", parents=[common])
     r.add_argument("--target", default="claude", help="claude|codex|antigravity|opencode|kilo|all")

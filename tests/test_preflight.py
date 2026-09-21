@@ -27,6 +27,10 @@ def test_missing_tools_detected(monkeypatch):
 
 
 def test_install_command_per_os(monkeypatch):
+    # pin a non-root euid: under WSL and in containers the tests run as root, where omitting
+    # sudo is the correct behaviour and would otherwise look like a failure here
+    if hasattr(preflight.os, "geteuid"):
+        monkeypatch.setattr(preflight.os, "geteuid", lambda: 1000)
     monkeypatch.setattr(preflight.shutil, "which", lambda n: "/opt/homebrew/bin/brew" if n == "brew" else None)
     assert preflight.install_command("age", "macos") == ["brew", "install", "age"]
     monkeypatch.setattr(preflight.shutil, "which", lambda n: {"apt-get": "/usr/bin/apt-get", "sudo": "/usr/bin/sudo"}.get(n))
@@ -146,3 +150,13 @@ def test_autocrlf_hint_survives_missing_git(monkeypatch, tmp_path):
         raise FileNotFoundError("git")
     monkeypatch.setattr(preflight.subprocess, "run", no_git)
     assert preflight.crlf_hint(tmp_path) == ""
+
+
+def test_install_command_omits_sudo_when_already_root(monkeypatch):
+    """WSL and most containers run as root. Prefixing sudo there is wrong, and often absent."""
+    if not hasattr(preflight.os, "geteuid"):
+        import pytest as _pytest
+        _pytest.skip("POSIX only")
+    monkeypatch.setattr(preflight.os, "geteuid", lambda: 0)
+    monkeypatch.setattr(preflight.shutil, "which", lambda n: "/usr/bin/apt-get" if n == "apt-get" else None)
+    assert preflight.install_command("age", "linux") == ["apt-get", "install", "-y", "age"]

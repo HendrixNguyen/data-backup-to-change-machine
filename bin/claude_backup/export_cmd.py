@@ -5,7 +5,7 @@ import shutil
 import subprocess
 from pathlib import Path
 
-from . import common, content, manifest, mcp, merge, secrets
+from . import common, content, manifest, mcp, merge, remote, secrets
 
 INSTRUCTION_FILES = ("CLAUDE.md", "CLAUDE.local.md", "RTK.md")
 CONTENT_KINDS = {"personal": ("skills", "agents", "commands"), "harness": ("skills", "hooks")}
@@ -101,6 +101,7 @@ def run_export(args) -> int:
         bundle_dir = common.resolve_bundle_dir(args.bundle)
         for stale in content.find_stale_artifacts(bundle_dir):
             common.warn(f"stale artifact from an interrupted run (safe to delete): {stale}")
+        remote.guard(bundle_dir, allow_public=getattr(args, "allow_public", False))
         scopes = common.scopes_for(args.scope)
         if not args.yes and _git_dirty(bundle_dir):
             raise common.BackupError(f"{bundle_dir} has uncommitted changes — commit/stash them or pass --yes")
