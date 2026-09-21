@@ -1,0 +1,5 @@
+# Deliberate exceptions to the export leak scan: <path-substring> <pattern-name>  # why
+# Reviewed 2026-09-21. Each line is a claim that the match is NOT a credential.
+
+harness/skills/browse/auth-browse.sh       google-api-key  # Firebase Web API key: a public client identifier, already committed upstream in os-claude-harness
+harness/skills/browse/get-firebase-token.sh google-api-key  # same Firebase Web API key, used to call identitytoolkit from the browse skill

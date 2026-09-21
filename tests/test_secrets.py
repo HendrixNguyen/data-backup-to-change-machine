@@ -183,3 +183,16 @@ def test_scan_for_leaks_ignores_placeholders(tmp_path):
     (tmp_path / "personal").mkdir()
     (tmp_path / "personal" / "s.json").write_text('{"a": "${PERSONAL_MCP_F_AUTHORIZATION}"}\n')
     assert secrets.scan_for_leaks(tmp_path) == []
+
+
+def test_scan_for_leaks_finds_inline_password(tmp_path):
+    (tmp_path / "personal").mkdir()
+    f = tmp_path / "personal" / "s.sh"
+    f.write_text('''curl -d \'{"email":"a@b.c","password":"hunter2x","returnSecureToken":true}\'\n''')
+    assert [(h[0], h[2]) for h in secrets.scan_for_leaks(tmp_path)] == [(f, "inline-password")]
+
+
+def test_scan_for_leaks_ignores_placeholdered_password(tmp_path):
+    (tmp_path / "personal").mkdir()
+    (tmp_path / "personal" / "s.json").write_text('{"password": "${PERSONAL_SETTINGS_PASSWORD}"}\n')
+    assert secrets.scan_for_leaks(tmp_path) == []

@@ -249,9 +249,40 @@ LEAK_PATTERNS: tuple[tuple[str, re.Pattern], ...] = (
     ("private-key", re.compile(r"-----BEGIN [A-Z ]*PRIVATE KEY-----")),
     ("bearer-token", re.compile(r"Bearer [A-Za-z0-9._~+/=-]{16,}")),
     ("google-api-key", re.compile(r"AIza[0-9A-Za-z_-]{35}")),
+    # A literal password next to its key, in JSON or as a shell/env assignment. `${...}` and obvious
+    # placeholders are excluded so a correctly placeholderised bundle stays clean.
+    ("inline-password", re.compile(r"""["']?pass(?:word|wd)?["']?\s*[:=]\s*["'](?!\$\{)(?!\*)[^"']{4,}["']""", re.I)),
 )
 _SCAN_SUFFIXES = (".json", ".md", ".toml", ".sh", ".txt", ".yaml", ".yml")
 _SCAN_SKIP_NAMES = ("bundle.json", "secrets.required")
+
+
+ALLOWLIST = ".leak-allow"
+
+
+def load_leak_allowlist(bundle_dir: Path) -> list[tuple[str, str]]:
+    """Read `.leak-allow`: one `<path-substring> <pattern-name>  # why` per line.
+
+    An allowlist entry is a deliberate, reviewable decision that a match is not a credential —
+    a Firebase Web API key, say, which is a public client identifier. Keeping the refusal as the
+    default and the exceptions in a committed file beats loosening the patterns for everyone.
+    """
+    f = bundle_dir / ALLOWLIST
+    if not f.exists():
+        return []
+    out = []
+    for line in f.read_text(encoding="utf-8").splitlines():
+        line = line.split("#", 1)[0].strip()
+        if not line:
+            continue
+        parts = line.split()
+        if len(parts) >= 2:
+            out.append((parts[0], parts[1]))
+    return out
+
+
+def allowed(path: Path, pattern: str, allowlist: list[tuple[str, str]]) -> bool:
+    return any(frag in path.as_posix() and pat == pattern for frag, pat in allowlist)
 
 
 def scan_for_leaks(root: Path) -> list[tuple[Path, int, str]]:

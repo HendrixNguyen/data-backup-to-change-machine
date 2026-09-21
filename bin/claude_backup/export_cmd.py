@@ -163,12 +163,17 @@ def _encrypt_secrets(bundle_dir: Path, found: dict[str, str], recipient: str, *,
 
 def _refuse_on_leak(bundle_dir: Path) -> None:
     """Last line of defence: never let a raw credential reach a bundle that is meant to be committable."""
+    allowlist = secrets.load_leak_allowlist(bundle_dir)
     hits = []
     for scope in ("personal", "harness"):
-        hits += secrets.scan_for_leaks(bundle_dir / scope)
+        hits += [h for h in secrets.scan_for_leaks(bundle_dir / scope)
+                 if not secrets.allowed(h[0], h[2], allowlist)]
     if hits:
         where = "; ".join(f"{p}:{line} ({pattern})" for p, line, pattern in hits[:10])
-        raise common.BackupError(f"refusing to finish: {len(hits)} possible raw secret(s) in the bundle — {where}")
+        raise common.BackupError(
+            f"refusing to finish: {len(hits)} possible raw secret(s) in the bundle — {where}"
+            f"\n  if a match is genuinely not a credential, record why in {bundle_dir / secrets.ALLOWLIST}"
+            f" as: <path-substring> <pattern-name>  # reason")
 
 
 def _unignore_secrets(bundle_dir: Path) -> None:
