@@ -41,11 +41,11 @@ def dumps_table(name: str, data: dict) -> str:
 
 def find_table_span(doc: str, name: str) -> tuple[int, int] | None:
     """(start, end) of the '[name]' table incl. its '[name.*]' subtables, up to the next unrelated header or EOF."""
-    header = re.compile(r"^\[" + re.escape(name) + r"\][ \t]*(#.*)?$", re.M)
+    header = re.compile(r"^\[" + re.escape(name) + r"\][ \t\r]*(#.*)?$", re.M)
     m = header.search(doc)
     if not m:
         return None
     start = m.start()
-    nxt = re.compile(r"^\[(?!" + re.escape(name) + r"(?:\.|\]))[^\]]*\][ \t]*(#.*)?$", re.M)
+    nxt = re.compile(r"^\[\[?(?!" + re.escape(name) + r"(?:\.|\]))[^\]]*\]\]?[ \t\r]*(#.*)?$", re.M)
     n = nxt.search(doc, m.end())
     return start, (n.start() if n else len(doc))

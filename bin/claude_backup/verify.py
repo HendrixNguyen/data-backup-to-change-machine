@@ -19,7 +19,8 @@ class Check:
 
 
 def frontmatter_ok(text: str) -> bool:
-    return bool(re.match(r"^---\n(.*?\n)?---\n", text, re.S)) and "name:" in text.split("---")[1]
+    m = re.match(r"^---\n(.*?\n)?---\n", text, re.S)   # check the matched block, not the first literal '---'
+    return bool(m) and "name:" in (m.group(1) or "")
 
 
 def _content_checks(bundle_dir: Path, target: Target, scopes, harness_path: Path | None) -> list[Check]:

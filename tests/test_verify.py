@@ -56,3 +56,8 @@ def test_exit_code(capsys):
     out = capsys.readouterr().out
     assert "PASS" in out and "FAIL" in out and "why" in out
     assert verify.report([verify.Check("a", True, "")]) == 0
+
+
+def test_frontmatter_ok_allows_dashes_inside_values():
+    assert verify.frontmatter_ok("---\ndescription: a --- b\nname: x\n---\nbody") is True
+    assert verify.frontmatter_ok("---\ndescription: d\n---\nname: only in body\n") is False

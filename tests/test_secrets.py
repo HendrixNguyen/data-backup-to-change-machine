@@ -71,9 +71,18 @@ def test_top_level_secret_key_redacted():
 
 
 def test_nested_dict_is_walked():
+    """A container named like a secret redacts every leaf, exactly as env/headers do: we would rather
+    over-redact an operational value (recoverable from the key) than ship one credential in the clear."""
     out, found = secrets.placeholderize_server("personal", "svc", {"auth": {"apiKey": "z", "mode": "oauth"}})
     assert out["auth"]["apiKey"] == "${PERSONAL_MCP_SVC_APIKEY}"
-    assert out["auth"]["mode"] == "oauth"
+    assert out["auth"]["mode"] == "${PERSONAL_MCP_SVC_MODE}"
+    assert found == {"PERSONAL_MCP_SVC_APIKEY": "z", "PERSONAL_MCP_SVC_MODE": "oauth"}
+
+
+def test_plain_nested_dict_only_redacts_secret_keys():
+    out, found = secrets.placeholderize_server("personal", "svc", {"opts": {"apiKey": "z", "mode": "oauth"}})
+    assert out["opts"]["apiKey"] == "${PERSONAL_MCP_SVC_APIKEY}"
+    assert out["opts"]["mode"] == "oauth"
     assert found == {"PERSONAL_MCP_SVC_APIKEY": "z"}
 
 
@@ -160,3 +169,17 @@ def test_age_decrypt_wrong_key_raises_backup_error(tmp_path, monkeypatch):
     monkeypatch.setattr(secrets.common, "run", boom)
     with pytest.raises(common.BackupError, match="no identity matched"):
         secrets.age_decrypt(tmp_path / "secrets.env.age", tmp_path / "keys.txt")
+
+
+def test_scan_for_leaks_finds_planted_token(tmp_path):
+    (tmp_path / "personal").mkdir()
+    f = tmp_path / "personal" / "s.json"
+    f.write_text('{"a": "ghp_' + "A" * 24 + '"}\n')
+    hits = secrets.scan_for_leaks(tmp_path)
+    assert [(h[0], h[1]) for h in hits] == [(f, 1)]
+
+
+def test_scan_for_leaks_ignores_placeholders(tmp_path):
+    (tmp_path / "personal").mkdir()
+    (tmp_path / "personal" / "s.json").write_text('{"a": "${PERSONAL_MCP_F_AUTHORIZATION}"}\n')
+    assert secrets.scan_for_leaks(tmp_path) == []

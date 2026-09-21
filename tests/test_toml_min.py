@@ -48,3 +48,16 @@ def test_dumps_table_escapes_del_character():
 def test_dumps_table_unsupported_type_names_the_key():
     with pytest.raises(TypeError, match=r"unsupported TOML value at t\.a: object"):
         toml_min.dumps_table("t", {"a": object()})
+
+
+def test_find_table_span_stops_at_array_of_tables():
+    doc = '[mcp_servers.a]\ncommand = "a"\n\n[[array]]\nx = 1\n\n[features]\ny = 2\n'
+    start, end = toml_min.find_table_span(doc, "mcp_servers.a")
+    assert doc[start:end] == '[mcp_servers.a]\ncommand = "a"\n\n'
+
+
+def test_find_table_span_handles_crlf():
+    doc = '[mcp_servers.a]\r\ncommand = "a"\r\n\r\n[features]\r\nx = true\r\n'
+    span = toml_min.find_table_span(doc, "mcp_servers.a")
+    assert span is not None and doc[span[0]:span[1]].startswith("[mcp_servers.a]")
+    assert "[features]" not in doc[span[0]:span[1]]

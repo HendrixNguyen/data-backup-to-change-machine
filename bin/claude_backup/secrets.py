@@ -16,8 +16,16 @@ PLACEHOLDER_RE = re.compile(r"\$\{([A-Z0-9_]+)\}")
 ALWAYS_SECRET_CONTAINERS = ("env", "headers")
 
 _USERINFO_URL_RE = re.compile(r"^[a-z][a-z0-9+.-]*://[^/@\s]+:[^/@\s]+@", re.I)
+_URL_QUERY_RE = re.compile(r"^[a-z][a-z0-9+.-]*://\S*\?", re.I)
 _FLAG_VALUE_RE = re.compile(r"^(--?)([^=\s]+)=(.*)$", re.S)
 _FLAG_RE = re.compile(r"^--?([^=\s]+)$")
+_LOOKS_LIKE_FLAG_RE = re.compile(r"^--?[A-Za-z]")
+
+_ENV_KEY_RE = re.compile(r"[A-Za-z_][A-Za-z0-9_]*")
+
+# Where a placeholder came from: (scope, kind, owner, key). Two emissions sharing it are the same
+# config slot (e.g. successive elements of one list), not a real name collision.
+Source = tuple[str, str, "str | None", str]
 
 
 def _norm(s: str) -> str:
@@ -30,14 +38,14 @@ def var_name(scope: str, kind: str, owner: str | None, key: str) -> str:
 
 
 def _is_url_with_query(v: Any) -> bool:
-    return isinstance(v, str) and v.startswith(("http://", "https://")) and "?" in v
+    return isinstance(v, str) and _URL_QUERY_RE.search(v) is not None
 
 
 def _has_userinfo(v: Any) -> bool:
     return isinstance(v, str) and _USERINFO_URL_RE.search(v) is not None
 
 
-def _put(found: dict[str, str], owners: dict[str, str], var: str, value: str, key: str) -> str:
+def _put(found: dict[str, str], owners: dict, var: str, value: str, key: str, source: Source) -> str:
     """Record value under var; on a same-name/different-value clash use var_2, var_3, … (first free)."""
     cand = var
     n = 1
@@ -46,32 +54,36 @@ def _put(found: dict[str, str], owners: dict[str, str], var: str, value: str, ke
             return cand  # same secret reached twice: one VAR, no warning
         n += 1
         cand = f"{var}_{n}"
-    if cand != var:
+    prev = owners.get(var)
+    if cand != var and (prev is None or prev[0] != source):  # same slot twice (a list) is not a collision
         common.warn(
-            f"variable name collision: '{owners.get(var, var)}' and '{key}' both normalise to {var}; "
+            f"variable name collision: '{prev[1] if prev else var}' and '{key}' both normalise to {var}; "
             f"using {cand} for '{key}'"
         )
     found[cand] = value
-    owners[cand] = key
+    owners[cand] = (source, key)
     return cand
 
 
-def placeholderize_server(scope: str, name: str, server: dict) -> tuple[dict, dict[str, str]]:
-    """Return (server copy with placeholders, {VAR: real}). Rules per spec §Export step 5.
+def _walk(obj: Any, *, scope: str, kind: str, owner: str | None, found: dict[str, str], owners: dict,
+          always: bool = False) -> dict[str, str]:
+    """Placeholderize `obj` in place; return {VAR: real} for the values produced by THIS call.
 
     Walks the whole object: every dict at any depth, plus lists of strings (argv-style flags).
+    `found`/`owners` may be shared across calls so variable names stay unique across a whole export.
     """
-    out = copy.deepcopy(server)
-    found: dict[str, str] = {}
-    owners: dict[str, str] = {}
+    produced: dict[str, str] = {}
 
     def emit(key: str, value: str) -> str:
-        return "${" + _put(found, owners, var_name(scope, "mcp", name, key), value, key) + "}"
+        var = _put(found, owners, var_name(scope, kind, owner, key), value, key, (scope, kind, owner, key))
+        produced[var] = value
+        return "${" + var + "}"
 
     def walk_dict(d: dict, always: bool) -> None:
-        for k in list(d.keys()):
+        for k in sorted(d):  # sorted so collision suffixes are deterministic run to run
             v = d[k]
-            secret_container = always or k in ALWAYS_SECRET_CONTAINERS
+            # a container reached through a secret-looking key is secret whole: apiKeys[], credentials{}, auth{}
+            secret_container = always or k in ALWAYS_SECRET_CONTAINERS or bool(SECRET_KEY_RE.search(k))
             if isinstance(v, dict):
                 walk_dict(v, secret_container)
             elif isinstance(v, list):
@@ -102,25 +114,41 @@ def placeholderize_server(scope: str, name: str, server: dict) -> tuple[dict, di
             lst[i] = m.group(1) + m.group(2) + "=" + emit(f"ARG_{m.group(2)}", m.group(3))
             return i
         m = _FLAG_RE.match(item)
-        if m and SECRET_KEY_RE.search(m.group(1)) and i + 1 < len(lst) and isinstance(lst[i + 1], str):
+        if (m and SECRET_KEY_RE.search(m.group(1)) and i + 1 < len(lst) and isinstance(lst[i + 1], str)
+                and not _LOOKS_LIKE_FLAG_RE.match(lst[i + 1])):  # in '--no-auth --port 3000', --port is not a value
             lst[i + 1] = emit(f"ARG_{m.group(1)}", lst[i + 1])
             return i + 1  # consume the value so it is not re-examined as a flag
         return i
 
-    if isinstance(out, dict):
-        walk_dict(out, False)
-    return out, found
+    if isinstance(obj, dict):
+        walk_dict(obj, always)
+    elif isinstance(obj, list):
+        walk_list(obj, always, kind)
+    return produced
 
 
-def placeholderize_settings(scope: str, settings: dict) -> tuple[dict, dict[str, str]]:
+def placeholderize_server(scope: str, name: str, server: dict, *, found: dict[str, str] | None = None,
+                          owners: dict | None = None) -> tuple[dict, dict[str, str]]:
+    """Return (server copy with placeholders, {VAR: real}). Rules per spec §Export step 5.
+
+    Pass one `found`/`owners` pair for a whole export to keep variable names unique across servers
+    and scopes; the returned dict still holds only the values this call produced.
+    """
+    out = copy.deepcopy(server)
+    produced = _walk(out, scope=scope, kind="mcp", owner=name,
+                     found=found if found is not None else {}, owners=owners if owners is not None else {})
+    return out, produced
+
+
+def placeholderize_settings(scope: str, settings: dict, *, found: dict[str, str] | None = None,
+                            owners: dict | None = None) -> tuple[dict, dict[str, str]]:
+    """Same walk as a server, minus the owner segment: every `env` block (top-level or nested) is a
+    secret container, and elsewhere the key/URL rules apply — so `apiKeyHelper` is lifted while
+    `model`, `permissions` and `hooks` commands are left alone."""
     out = copy.deepcopy(settings)
-    found: dict[str, str] = {}
-    owners: dict[str, str] = {}
-    for k, v in list((out.get("env") or {}).items()):
-        if isinstance(v, str):
-            var = _put(found, owners, var_name(scope, "settings", None, k), v, k)
-            out["env"][k] = "${" + var + "}"
-    return out, found
+    produced = _walk(out, scope=scope, kind="settings", owner=None,
+                     found=found if found is not None else {}, owners=owners if owners is not None else {})
+    return out, produced
 
 
 def _escape_env(v: str) -> str:
@@ -156,8 +184,8 @@ def _parse_env_text(text: str) -> dict[str, str]:
 def write_env(path: Path, values: dict[str, str]) -> None:
     from . import merge
     for k in values:
-        if "=" in k or "\n" in k or "\r" in k:
-            raise common.BackupError(f"invalid secrets.env key (contains '=' or a newline): {k!r}")
+        if not _ENV_KEY_RE.fullmatch(k):
+            raise common.BackupError(f"invalid secrets.env key (not a shell-safe identifier): {k!r}")
     merge.atomic_write_text(path, "".join(f"{k}={_escape_env(values[k])}\n" for k in sorted(values)))
 
 
@@ -206,6 +234,46 @@ def age_decrypt(enc: Path, key_file: Path) -> dict[str, str]:
     except FileNotFoundError as e:
         raise common.BackupError(f"{enc} not found") from e
     return _parse_env_text(r.stdout)
+
+
+# Last line of defence: if the redactor missed something, this catches the well-known token shapes
+# before they reach a public repo. Names are for the operator; the matched text is never printed.
+LEAK_PATTERNS: tuple[tuple[str, re.Pattern], ...] = (
+    ("anthropic-key", re.compile(r"sk-ant-[A-Za-z0-9_-]{20,}")),
+    ("openai-key", re.compile(r"sk-[A-Za-z0-9]{20,}")),
+    ("github-token", re.compile(r"ghp_[A-Za-z0-9]{20,}")),
+    ("github-pat", re.compile(r"github_pat_[A-Za-z0-9_]{20,}")),
+    ("gitlab-token", re.compile(r"glpat-[A-Za-z0-9_-]{16,}")),
+    ("slack-token", re.compile(r"xox[abpr]-[A-Za-z0-9-]{10,}")),
+    ("aws-access-key-id", re.compile(r"AKIA[0-9A-Z]{16}")),
+    ("private-key", re.compile(r"-----BEGIN [A-Z ]*PRIVATE KEY-----")),
+    ("bearer-token", re.compile(r"Bearer [A-Za-z0-9._~+/=-]{16,}")),
+    ("google-api-key", re.compile(r"AIza[0-9A-Za-z_-]{35}")),
+)
+_SCAN_SUFFIXES = (".json", ".md", ".toml", ".sh", ".txt", ".yaml", ".yml")
+_SCAN_SKIP_NAMES = ("bundle.json", "secrets.required")
+
+
+def scan_for_leaks(root: Path) -> list[tuple[Path, int, str]]:
+    """Grep an exported tree for live-looking credentials. Returns (file, line number, pattern name)."""
+    hits: list[tuple[Path, int, str]] = []
+    if not root.is_dir():
+        return hits
+    for p in sorted(root.rglob("*")):
+        if p.name in _SCAN_SKIP_NAMES or p.name.endswith(".age") or p.suffix.lower() not in _SCAN_SUFFIXES:
+            continue
+        if not p.is_file():
+            continue
+        try:
+            text = p.read_text(encoding="utf-8", errors="replace")
+        except OSError:
+            continue
+        for lineno, line in enumerate(text.splitlines(), start=1):
+            for name, rx in LEAK_PATTERNS:
+                if rx.search(line):
+                    hits.append((p, lineno, name))
+                    break  # one report per line is enough to send the operator to it
+    return hits
 
 
 def default_key_file() -> Path:
