@@ -118,3 +118,30 @@ def test_dry_run_never_installs_tools(exported, fake_home, fake_harness, monkeyp
                         lambda **kw: seen.update(kw))
     restore_cmd.run_restore(rargs(bundle=exported, harness_path=fake_harness, dry_run=True))
     assert seen.get("dry_run") is True
+
+
+def test_only_does_not_write_unselected_harness_servers(exported, fake_home, fake_harness):
+    """--only prunes the plan; it must prune the writes too. A second bundle server that the user
+    filtered out must not reach <harness>/.mcp.json."""
+    hm = exported / "harness" / "mcp.json"
+    data = json.loads(hm.read_text())
+    data["mcpServers"]["serverB"] = {"command": "b"}
+    hm.write_text(json.dumps(data))
+    from claude_backup import manifest
+    manifest.write(exported, manifest.build(exported, scopes=("personal", "harness"), claude_version=None,
+                                            symlinks=manifest.read(exported).get("symlinks", {}), exec_bits={}))
+    (fake_harness / ".mcp.json").write_text(json.dumps({"mcpServers": {}}))
+    rc = restore_cmd.run_restore(rargs(bundle=exported, harness_path=fake_harness, scope="harness",
+                                       only=["harness/mcp/playwright"]))
+    assert rc == 0
+    written = json.loads((fake_harness / ".mcp.json").read_text())["mcpServers"]
+    assert "playwright" in written and "serverB" not in written
+
+
+def test_only_verify_ignores_units_outside_the_filter(exported, fake_home, fake_harness):
+    """A --only restore must not fail verify over units it deliberately skipped."""
+    rc = restore_cmd.run_restore(rargs(bundle=exported, harness_path=fake_harness, scope="personal",
+                                       only=["personal/skills/real-skill"]))
+    assert rc == 0
+    assert (fake_home / ".claude/skills/real-skill/SKILL.md").exists()
+    assert not (fake_home / ".claude/skills/linked-skill").exists()   # excluded, and not a failure

@@ -138,19 +138,18 @@ class Session:
 
     # ---------- harness .mcp.json (Claude only; merged into <harness>/.mcp.json, never ~/.claude.json) ----------
     def harness_mcp(self) -> tuple[list[PlanEntry], dict | None]:
+        """Plan only. The merge happens in _apply, after --only has pruned the entries — building the
+        merged document here would write servers the user filtered out."""
         if "harness" not in self.scopes or not self.target.supports_harness or not self.harness_path:
             return [], None
         bundle = self._subst_obj((merge.read_json(self.bundle_dir / "harness/mcp.json", default={}) or {}).get("mcpServers") or {})
         dst = self.harness_path / ".mcp.json"
-        data = merge.read_json(dst, default={}) or {}
-        cur = data.setdefault("mcpServers", {})
+        cur = (merge.read_json(dst, default={}) or {}).get("mcpServers") or {}
         entries = []
         for n, c in bundle.items():
             v = "add" if n not in cur else ("replace" if self.args.force else "skip")
             entries.append(PlanEntry("harness/mcp", n, v, None, dst, n in cur and cur[n] != c))
-            if v != "skip":
-                cur[n] = c
-        return entries, data
+        return entries, bundle
 
     # ---------- settings / instructions ----------
     def settings_entries(self) -> list[tuple[PlanEntry, dict]]:
@@ -256,11 +255,16 @@ def _apply(s, entries, keep, m, mcp_entries, g, projects, hmcp_entries, hmcp_dat
         p2 = {p: {n: c for n, c in srv.items() if n in names} for p, srv in projects.items()}
         p2 = {p: srv for p, srv in p2.items() if srv}
         s.written += target.write_mcp(g2, p2, force=args.force, dry=False)
-    if hmcp_data is not None and any(id(e) in keep and e.verdict != "skip" for e in hmcp_entries):
-        dst = hmcp_entries[0].dst
+    kept_harness = [e for e in hmcp_entries if id(e) in keep and e.verdict != "skip"]
+    if kept_harness and hmcp_data is not None:
+        dst = kept_harness[0].dst
+        data = merge.read_json(dst, default={}) or {}       # re-read: the plan may be minutes old
+        cur = data.setdefault("mcpServers", {})
+        for e in kept_harness:
+            cur[e.unit] = hmcp_data[e.unit]
         b = merge.backup_file(dst)
         b and s.backups.append(b)
-        merge.atomic_write_json(dst, hmcp_data)
+        merge.atomic_write_json(dst, data)
         s.written.append(dst)
     for e, merged in settings:
         if id(e) in keep and e.verdict != "skip":
@@ -284,7 +288,8 @@ def _finish(s, bundle_dir, target, harness_path, args) -> int:
     # verify
     print("\nVerify:")
     checks = verify.run_checks(bundle_dir, target, scopes=s.scopes, written_files=s.written, missing_secrets=s.missing_secrets,
-                               run_cli=(target.name == "claude" and shutil.which("claude") is not None), harness_path=harness_path)
+                               run_cli=(target.name == "claude" and shutil.which("claude") is not None), harness_path=harness_path,
+                               only=args.only)
     return verify.report(checks)
 
 

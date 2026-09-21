@@ -23,7 +23,17 @@ def frontmatter_ok(text: str) -> bool:
     return bool(m) and "name:" in (m.group(1) or "")
 
 
-def _content_checks(bundle_dir: Path, target: Target, scopes, harness_path: Path | None) -> list[Check]:
+def selected(rel: str, only) -> bool:
+    """Same matching rule as plan.apply_only: exact unit, a prefix path, or a whole kind."""
+    if not only:
+        return True
+    for k in (o.replace("\\", "/").strip("/") for o in only):
+        if rel == k or rel.startswith(k + "/") or rel.rsplit("/", 1)[0] == k:
+            return True
+    return False
+
+
+def _content_checks(bundle_dir: Path, target: Target, scopes, harness_path: Path | None, only=()) -> list[Check]:
     out = []
     kinds = []
     if "personal" in scopes:
@@ -35,6 +45,8 @@ def _content_checks(bundle_dir: Path, target: Target, scopes, harness_path: Path
         if not enabled:
             continue
         for unit in list_units(bundle_dir / rel):
+            if not selected(f"{rel}/{unit}", only):
+                continue
             dst = tdir / unit
             if label == "agent":
                 override = target.verify_agent(unit)
@@ -52,16 +64,18 @@ def _content_checks(bundle_dir: Path, target: Target, scopes, harness_path: Path
     return out
 
 
-def _mcp_checks(bundle_dir: Path, target: Target, scopes, harness_path: Path | None) -> list[Check]:
+def _mcp_checks(bundle_dir: Path, target: Target, scopes, harness_path: Path | None, only=()) -> list[Check]:
     names = set()
     if "personal" in scopes:
         names |= set((merge.read_json(bundle_dir / "personal/mcp/global.json", default={}) or {}).get("mcpServers") or {})
         for servers in mcp.read_projects(bundle_dir / "personal/mcp/projects").values():
             names |= set(servers)
     present = target.read_mcp_names()
+    names = {n for n in names if selected(f"personal/mcp/{n}", only)}
     out = [Check(f"mcp {n}", n in present, "" if n in present else "not in target config") for n in sorted(names)]
     if "harness" in scopes and target.supports_harness and harness_path:
-        hnames = set((merge.read_json(bundle_dir / "harness/mcp.json", default={}) or {}).get("mcpServers") or {})
+        hnames = {n for n in ((merge.read_json(bundle_dir / "harness/mcp.json", default={}) or {}).get("mcpServers") or {})
+                  if selected(f"harness/mcp/{n}", only)}
         hpresent = set(mcp.extract_harness(harness_path / ".mcp.json"))
         out += [Check(f"mcp harness/{n}", n in hpresent, "" if n in hpresent else f"not in {harness_path / '.mcp.json'}") for n in sorted(hnames)]
     return out
@@ -98,8 +112,9 @@ def _cli_checks(target: Target) -> list[Check]:
 
 
 def run_checks(bundle_dir: Path, target: Target, *, scopes, written_files: list[Path], missing_secrets: list[str], run_cli: bool,
-               harness_path: Path | None = None) -> list[Check]:
-    checks = (_content_checks(bundle_dir, target, scopes, harness_path) + _mcp_checks(bundle_dir, target, scopes, harness_path)
+               harness_path: Path | None = None, only=()) -> list[Check]:
+    checks = (_content_checks(bundle_dir, target, scopes, harness_path, only)
+              + _mcp_checks(bundle_dir, target, scopes, harness_path, only)
               + [_placeholder_check(written_files, missing_secrets)])
     if run_cli:
         checks += _cli_checks(target)
