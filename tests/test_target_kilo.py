@@ -29,3 +29,13 @@ def test_kilo_mcp_claude_shape(fake_home, servers):
 def test_kilo_flush_modes_is_noop_without_queue(fake_home):
     assert get_target("kilo").flush_modes(dry=False) is None
     assert not (fake_home / ".kilocode/custom_modes.yaml").exists()
+
+
+def test_kilo_notices_the_rebranded_layout(fake_home):
+    """Two generations of Kilo exist; when both are on the machine, say which one we wrote."""
+    t = get_target("kilo")
+    assert t.legacy_layout_notice() is None
+    (fake_home / ".config" / "kilo").mkdir(parents=True)
+    (fake_home / ".config" / "kilo" / "kilo.jsonc").write_text("{}\n")
+    note = t.legacy_layout_notice()
+    assert note and ".kilocode" in note and "kilo.jsonc" in note

@@ -1,4 +1,11 @@
-"""Kilo Code target: ~/.kilocode/skills, MCP in mcp_settings.json (Claude shape), agents → custom_modes.yaml entries."""
+"""Kilo Code target: ~/.kilocode/skills, MCP in mcp_settings.json (Claude shape), agents → custom_modes.yaml entries.
+
+Two generations of this product exist. The extension (`kilocode.kilo-code`) uses the `~/.kilocode`
+layout this adapter writes, and that is where real skills are found on disk. The rebranded CLI keeps
+`~/.config/kilo/kilo.jsonc` with a different, top-level `mcp` key. We target the layout we can verify
+and say so out loud when the newer one is also present, rather than guessing at a format we have not
+confirmed. See `legacy_layout_notice()`.
+"""
 from __future__ import annotations
 
 import re
@@ -30,6 +37,15 @@ class KiloTarget(ClaudeShapeJsonMixin, Target):
     def agents_dir(self) -> Path: return self.root()          # placeholder; modes live in custom_modes.yaml
     def config(self) -> Path: return self.root() / "mcp_settings.json"
     def modes_file(self) -> Path: return self.root() / "custom_modes.yaml"
+
+    def legacy_layout_notice(self) -> str | None:
+        """Non-empty when the rebranded CLI's config is also on this machine, so the user is told which
+        of the two layouts we wrote to instead of quietly picking one."""
+        newer = common.home() / ".config" / "kilo" / "kilo.jsonc"
+        if newer.exists():
+            return (f"kilo: wrote the {self.root()} layout; {newer} (the rebranded CLI) is also present "
+                    "and uses a different MCP format — check which one your Kilo reads")
+        return None
 
     def queue_agent(self, name: str, text: str) -> None:
         fm, body = _frontmatter(text)

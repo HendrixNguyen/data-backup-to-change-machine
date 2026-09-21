@@ -201,6 +201,9 @@ def restore_one(args, target: Target, bundle_dir: Path, harness_path: Path | Non
     s = Session(args, target, bundle_dir, harness_path, values, missing_key)
     if missing_key:
         s.notices.append("secrets.env.age present but no age key — placeholders left in place")
+    note = getattr(target, "legacy_layout_notice", lambda: None)()
+    if note:
+        s.notices.append(note)
     if common.os_name() == "windows" and (bundle_dir / "harness/hooks").exists() and "harness" in s.scopes:
         s.notices.append("bundle contains POSIX hook scripts; on Windows they need a POSIX shell (Git Bash/WSL) to run")
 
