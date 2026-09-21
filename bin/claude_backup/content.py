@@ -73,13 +73,19 @@ def aside_path(target: Path) -> Path:
     return aside
 
 
-def replace_dir(target: Path, new_tree: Path, *, keep_aside: bool) -> Path | None:
+def replace_dir(target: Path, new_tree: Path, *, keep_aside: bool, on_aside=None) -> Path | None:
     """Spec 'directory replace': rename target aside as <name>.bak-<ts>, rename new_tree into place.
-    Returns the aside path when kept, else None. Never uses os.replace on a non-empty dir."""
+    Returns the aside path when kept, else None. Never uses os.replace on a non-empty dir.
+
+    `on_aside` is called with the aside path the instant it exists — before the second rename, which
+    is the one that can fail. Without that, a crash between the two renames leaves the target missing
+    and its only copy unrecorded, so the abort report could not tell the user where it went."""
     aside = None
-    if target.exists():
+    if target.exists() or target.is_symlink():
         aside = aside_path(target)
         os.rename(target, aside)
+        if on_aside is not None:
+            on_aside(aside)
     target.parent.mkdir(parents=True, exist_ok=True)
     os.rename(new_tree, target)
     if aside and not keep_aside:

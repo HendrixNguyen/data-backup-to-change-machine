@@ -145,3 +145,61 @@ def test_only_verify_ignores_units_outside_the_filter(exported, fake_home, fake_
     assert rc == 0
     assert (fake_home / ".claude/skills/real-skill/SKILL.md").exists()
     assert not (fake_home / ".claude/skills/linked-skill").exists()   # excluded, and not a failure
+
+
+def test_only_global_mcp_does_not_touch_a_same_named_project_server(exported, fake_home, fake_harness):
+    """--only carries (scope, name), not just name. A global 'dup' must not overwrite project-a's 'dup'."""
+    gf = exported / "personal" / "mcp" / "global.json"
+    gf.write_text(json.dumps({"mcpServers": {"dup": {"command": "from-global"}}}))
+    pdir = exported / "personal" / "mcp" / "projects"
+    pa = str(fake_home / "proj-a")
+    for f in pdir.glob("*.json"):
+        d = json.loads(f.read_text())
+        if d["project"] == pa:
+            d["mcpServers"]["dup"] = {"command": "from-project"}
+            f.write_text(json.dumps(d))
+    from claude_backup import manifest
+    manifest.write(exported, manifest.build(exported, scopes=("personal", "harness"), claude_version=None,
+                                            symlinks=manifest.read(exported).get("symlinks", {}), exec_bits={}))
+    (fake_home / ".claude.json").write_text(json.dumps(
+        {"mcpServers": {}, "projects": {pa: {"mcpServers": {"dup": {"command": "LOCAL-KEEP"}}}}}))
+    rc = restore_cmd.run_restore(rargs(bundle=exported, harness_path=fake_harness, scope="personal",
+                                       only=["personal/mcp/global/dup"], force=True))
+    assert rc == 0
+    cj = json.loads((fake_home / ".claude.json").read_text())
+    assert cj["mcpServers"]["dup"] == {"command": "from-global"}
+    assert cj["projects"][pa]["mcpServers"]["dup"] == {"command": "LOCAL-KEEP"}   # never selected
+
+
+def test_force_restore_is_idempotent_for_mcp_and_symlinks(exported, fake_home, fake_harness):
+    """A second --force run over an unchanged bundle must not rewrite or pile up .bak copies."""
+    assert restore_cmd.run_restore(rargs(bundle=exported, harness_path=fake_harness, force=True)) == 0
+    baks = lambda: len(list((fake_home / ".claude" / "skills").glob("*.bak-*"))) + \
+                   len(list(fake_home.glob(".claude.json.bak-*")))
+    before = baks()
+    assert restore_cmd.run_restore(rargs(bundle=exported, harness_path=fake_harness, force=True)) == 0
+    assert baks() == before
+    p = fake_home / ".claude/skills/linked-skill"
+    assert p.is_symlink()                                        # still a symlink, not churned into a copy
+
+
+def test_aside_is_recorded_before_the_risky_rename(fake_home, tmp_path, monkeypatch):
+    """If the second rename fails, the user must still be told where their directory went."""
+    from claude_backup import content
+    target = tmp_path / "unit"; target.mkdir(); (target / "f").write_text("original")
+    new_tree = tmp_path / "staged"; new_tree.mkdir(); (new_tree / "f").write_text("new")
+    seen = []
+    real_rename = content.os.rename
+    calls = {"n": 0}
+
+    def flaky(a, b):
+        calls["n"] += 1
+        if calls["n"] == 2:
+            raise OSError("no space left on device")
+        return real_rename(a, b)
+
+    monkeypatch.setattr(content.os, "rename", flaky)
+    with pytest.raises(OSError):
+        content.replace_dir(target, new_tree, keep_aside=True, on_aside=seen.append)
+    assert len(seen) == 1 and (seen[0] / "f").read_text() == "original"
+    assert not target.exists()          # the failure mode; recoverable only because seen[0] is known

@@ -70,6 +70,8 @@ class Session:
             self.written.append(dst)
             return
         origin = m.get("symlinks", {}).get(e.rel)
+        if origin and dst.is_symlink() and os.path.realpath(dst) == os.path.realpath(origin):
+            return          # already points where the bundle says; rewriting would only churn a .bak
         if origin and Path(origin).exists() and os.name != "nt":
             if dst.exists() or dst.is_symlink():
                 aside = content.aside_path(dst)
@@ -86,9 +88,7 @@ class Session:
             tmp = Path(tempfile.mkdtemp(prefix=f".{dst.name}.", suffix=".tmp", dir=dst.parent))
             shutil.rmtree(tmp)
             shutil.copytree(src, tmp)
-            aside = content.replace_dir(dst, tmp, keep_aside=True)
-            if aside:
-                self.backups.append(aside)
+            content.replace_dir(dst, tmp, keep_aside=True, on_aside=self.backups.append)
             content.apply_exec_bits(dst, e.rel, m.get("files", {}) and {k: v.get("exec", False) for k, v in m["files"].items()})
             self.written += [p for p in dst.rglob("*") if p.is_file()]
         else:
@@ -147,7 +147,8 @@ class Session:
         cur = (merge.read_json(dst, default={}) or {}).get("mcpServers") or {}
         entries = []
         for n, c in bundle.items():
-            v = "add" if n not in cur else ("replace" if self.args.force else "skip")
+            same = n in cur and cur[n] == c
+            v = "add" if n not in cur else ("replace" if (self.args.force and not same) else "skip")
             entries.append(PlanEntry("harness/mcp", n, v, None, dst, n in cur and cur[n] != c))
         return entries, bundle
 
@@ -230,7 +231,7 @@ def restore_one(args, target: Target, bundle_dir: Path, harness_path: Path | Non
     # apply (wrapped so an abort still reports what was written — spec §Error handling)
     try:
         _apply(s, entries, keep, m, mcp_entries, g, projects, hmcp_entries, hmcp_data, settings, target, args)
-    except Exception as e:
+    except (Exception, KeyboardInterrupt) as e:   # Ctrl-C is how a long restore is actually aborted
         print(f"\nerror: restore aborted in {type(e).__name__}: {e}")
         print("files written before the abort:")
         for p in s.written:
@@ -238,6 +239,8 @@ def restore_one(args, target: Target, bundle_dir: Path, harness_path: Path | Non
         print("backups:")
         for p in s.backups:
             print(f"  {p}")
+        if isinstance(e, KeyboardInterrupt):
+            raise
         return 1
     return _finish(s, bundle_dir, target, harness_path, args)
 
@@ -252,10 +255,17 @@ def _apply(s, entries, keep, m, mcp_entries, g, projects, hmcp_entries, hmcp_dat
             s.written.append(p)
     kept_mcp = [e for e in mcp_entries if id(e) in keep and e.verdict != "skip"]
     if kept_mcp:
-        # --only on MCP is per server: restrict what write_mcp sees to the kept names
-        names = {e.unit.rsplit("/", 1)[-1] for e in kept_mcp}
-        g2 = {n: c for n, c in g.items() if n in names}
-        p2 = {p: {n: c for n, c in srv.items() if n in names} for p, srv in projects.items()}
+        # --only on MCP is per (scope, server). Collapsing to a bare name would let a same-named
+        # server in an unselected project ride along and be overwritten.
+        kept_global, kept_proj = set(), {}
+        for e in kept_mcp:
+            scope, _, name = e.unit.rpartition("/")
+            if scope == "global":
+                kept_global.add(name)
+            else:
+                kept_proj.setdefault(scope, set()).add(name)
+        g2 = {n: c for n, c in g.items() if n in kept_global}
+        p2 = {p: {n: c for n, c in srv.items() if n in kept_proj.get(p, ())} for p, srv in projects.items()}
         p2 = {p: srv for p, srv in p2.items() if srv}
         s.written += target.write_mcp(g2, p2, force=args.force, dry=False)
     kept_harness = [e for e in hmcp_entries if id(e) in keep and e.verdict != "skip"]

@@ -30,7 +30,8 @@ class ClaudeTarget(Target):
         entries: list[PlanEntry] = []
         cur = data.setdefault("mcpServers", {})
         for name, cfg in global_servers.items():
-            v = "add" if name not in cur else ("replace" if force else "skip")
+            same = name in cur and cur[name] == cfg
+            v = "add" if name not in cur else ("replace" if (force and not same) else "skip")
             entries.append(PlanEntry("personal/mcp", f"global/{name}", v, None, self._claude_json(), name in cur and cur[name] != cfg))
             if v != "skip":
                 cur[name] = cfg
@@ -38,7 +39,8 @@ class ClaudeTarget(Target):
         for proj, servers in projects.items():
             pcur = projs.setdefault(proj, {}).setdefault("mcpServers", {})
             for name, cfg in servers.items():
-                v = "add" if name not in pcur else ("replace" if force else "skip")
+                same = name in pcur and pcur[name] == cfg
+                v = "add" if name not in pcur else ("replace" if (force and not same) else "skip")
                 entries.append(PlanEntry("personal/mcp", f"{proj}/{name}", v, None, self._claude_json(), name in pcur and pcur[name] != cfg))
                 if v != "skip":
                     pcur[name] = cfg
