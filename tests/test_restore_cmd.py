@@ -78,8 +78,8 @@ def test_remap_applies_to_project_paths(exported, fake_home, fake_harness):
     rc = restore_cmd.run_restore(rargs(bundle=exported, harness_path=fake_harness, scope="personal", remap=[f"{fake_home}=/new/home"]))
     assert rc == 0
     cj = json.loads((fake_home / ".claude.json").read_text())
-    sep = "\\" if os.name == "nt" else "/"      # a cross-OS remap normalises the tail to one separator
-    assert f"/new/home{sep}proj-b" in cj["projects"]
+    # the remapped tail takes the NEW prefix's separator style, which is POSIX here on every OS
+    assert "/new/home/proj-b" in cj["projects"]
 
 
 def test_secrets_substituted_when_key_present(exported, fake_home, fake_harness, monkeypatch):

@@ -4,12 +4,20 @@ from types import SimpleNamespace
 from claude_backup import export_cmd, restore_cmd, manifest
 
 
+# Restore cannot create symlinks on Windows, so a symlinked unit legitimately comes back as a real
+# directory. rglob does not descend into the symlink beforehand but does descend into the copy after,
+# which is a difference in the snapshot, not in the restore.
+SYMLINKED_UNITS = ("skills/linked-skill",)
+
+
 def _snapshot(root: Path) -> dict:
     """Bytes for every file, except .json files compare as parsed JSON (formatting is not part of the contract)."""
     out = {}
     for p in root.rglob("*"):
         if p.is_file() and ".bak-" not in str(p) and "plugins" not in p.parts:
             rel = p.relative_to(root).as_posix()
+            if os.name == "nt" and any(rel.startswith(u + "/") for u in SYMLINKED_UNITS):
+                continue
             out[rel] = json.loads(p.read_text()) if p.suffix == ".json" else p.read_bytes()
     return out
 
