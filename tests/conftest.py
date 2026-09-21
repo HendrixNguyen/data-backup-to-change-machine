@@ -82,3 +82,8 @@ def bundle_dir(tmp_path):
     b = tmp_path / "bundle"
     b.mkdir()
     return b
+
+
+@pytest.fixture
+def servers():
+    return ({"pw": {"command": "npx", "args": ["@playwright/mcp"], "env": {"A": "1"}}, "fig": {"type": "http", "url": "https://mcp.figma.com/mcp", "headers": {"Authorization": "Bearer t"}}}, {})
