@@ -64,6 +64,26 @@ cd $HOME\Workspaces\common\data-backup-to-change-machine
 .\restore.ps1 --scope harness --harness-path $HOME\Workspaces\common\claude-harness\os-claude-harness
 ```
 
+### WSL
+
+WSL is Linux as far as this tool is concerned, and that is correct: symlinks, executable
+bits and `apt-get` all behave the Linux way. Use the `./restore.sh` block above, not the
+PowerShell one.
+
+The catch is that a Windows machine running WSL can have **two** Claude Code installs —
+one in the WSL home (`/home/<you>/.claude`) and one on the Windows side
+(`C:\Users\<you>\.claude`, which WSL sees as `/mnt/c/Users/<you>/.claude`). They are
+separate, and this tool only ever touches the one belonging to the environment you run it
+from. Export and restore both print which home they are using, and warn outright if the
+Linux home is empty while a Windows-side config exists — that combination almost always
+means you meant to run `.\restore.ps1` from Windows instead.
+
+To back up both, run it twice: once inside WSL, once from PowerShell, into separate
+bundle directories (`--bundle`). Restoring a WSL bundle into the Windows home by pointing
+`HOME` at `/mnt/c/Users/<you>` is possible but not recommended: the Windows drive is
+mounted without Unix metadata by default, so executable bits are dropped and symlinks are
+written in a form Windows does not follow.
+
 `restore` never overwrites something that's already there and identical, and by default
 never overwrites something that differs — it reports `skip (differs)` and leaves your
 copy alone. Pass `--force` to let the bundle win on a specific unit (see Troubleshooting).
